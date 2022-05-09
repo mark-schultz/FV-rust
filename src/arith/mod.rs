@@ -2,6 +2,7 @@
 //! In particular, arithmetic in Z[x]/(f(x)) for f(x) = x^d + 1 for d = 2^k
 //!
 //! Sample parameters (just before Section 7) are q = 2^n and d = 2^k for k= 10, n > 1358.
+#![allow(dead_code)]
 
 use crate::Errors;
 use num_bigint::{BigInt, Sign};
@@ -251,12 +252,11 @@ impl<R: Ring> Mul<CycloPoly<R>> for CycloPoly<R> {
     fn mul(self, rhs: CycloPoly<R>) -> Self::Output {
         let mut unreduced_res = CycloPoly::<R>::zero();
         unreduced_res.coeffs.extend(CycloPoly::<R>::zero().coeffs);
-        let mut temp = R::zero();
         for (i, val) in unreduced_res.coeffs.iter_mut().enumerate() {
             for j in 0..=i {
                 // When indexing should work
                 if j < DEGREE && i < DEGREE + j {
-                    temp = self.coeffs[j].clone();
+                    let mut temp = self.coeffs[j].clone();
                     temp *= &rhs.coeffs[i - j];
                     *val += &temp;
                 }
@@ -269,6 +269,37 @@ impl<R: Ring> Mul<CycloPoly<R>> for CycloPoly<R> {
             *val -= &unreduced_res.coeffs[DEGREE + i];
         }
         res
+    }
+}
+
+impl Rem<Integer> for CycloPoly<Integer> {
+    type Output = CycloPoly<Integer>;
+    fn rem(self, rhs: Integer) -> Self::Output {
+        let mut output = self.clone();
+        output %= &rhs;
+        output
+    }
+}
+
+impl RemAssign<&Integer> for CycloPoly<Integer> {
+    fn rem_assign(&mut self, rhs: &Integer) {
+        for i in 0..DEGREE {
+            self.coeffs[i] %= &rhs;
+        }
+    }
+}
+
+impl CycloPoly<Integer> {
+    /// Centered reduction
+    fn modulo_assign(&mut self, rhs: &Integer) {
+        for i in 0..DEGREE {
+            self.coeffs[i].modulo_assign(rhs);
+        }
+    }
+    fn modulo(self, rhs: Integer) -> Self {
+        let mut output = self.clone();
+        output.modulo_assign(&rhs);
+        output
     }
 }
 
