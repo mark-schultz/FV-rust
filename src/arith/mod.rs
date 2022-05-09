@@ -7,23 +7,65 @@ use crate::Errors;
 use num_bigint::{BigInt, Sign};
 use num_traits::identities::{One, Zero};
 use std::{
-    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
+    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
     str::FromStr,
 };
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 struct Integer(BigInt);
 
-impl Add<Integer> for Integer {
+/// Note: % does the NON-CENTERED reduction.
+/// FV frequently uses centered reductions, which we do separately.
+impl Rem<Integer> for Integer {
     type Output = Integer;
-    fn add(self, rhs: Self) -> Self::Output {
-        Integer(self.0 + rhs.0)
+    fn rem(self, rhs: Self) -> Self::Output {
+        let mut output = self.clone();
+        output %= &rhs;
+        output
     }
 }
 
-impl AddAssign<Integer> for Integer {
-    fn add_assign(&mut self, rhs: Integer) {
-        self.0 += rhs.0
+impl RemAssign<&Integer> for Integer {
+    fn rem_assign(&mut self, rhs: &Integer) {
+        self.0 %= &rhs.0;
+    }
+}
+
+impl Integer {
+    /// Centered reduction
+    fn modulo_assign(&mut self, rhs: &Integer) {
+        *self %= rhs;
+        let mut temp = rhs.clone();
+        temp.0 /= 2_i32;
+        if self.0 >= temp.0 {
+            *self -= &rhs;
+        }
+    }
+    fn modulo(self, rhs: Integer) -> Self {
+        let mut output = self.clone();
+        Integer::modulo_assign(&mut output, &rhs);
+        output
+    }
+}
+
+impl From<i32> for Integer {
+    fn from(x: i32) -> Self {
+        Integer(BigInt::from(x))
+    }
+}
+
+impl Add<Integer> for Integer {
+    type Output = Integer;
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut output = self.clone();
+        output += &rhs;
+        output
+    }
+}
+
+impl AddAssign<&Integer> for Integer {
+    fn add_assign(&mut self, rhs: &Integer) {
+        self.0 += &rhs.0
     }
 }
 
@@ -37,20 +79,45 @@ impl Neg for Integer {
 impl Sub<Integer> for Integer {
     type Output = Integer;
     fn sub(self, rhs: Self) -> Self::Output {
-        self + (-rhs)
+        let mut output = self.clone();
+        output -= &rhs;
+        output
     }
 }
 
-impl SubAssign<Integer> for Integer {
-    fn sub_assign(&mut self, rhs: Integer) {
-        self.0 -= rhs.0
+impl SubAssign<&Integer> for Integer {
+    fn sub_assign(&mut self, rhs: &Integer) {
+        self.0 -= &rhs.0
     }
 }
 
 impl Mul<Integer> for Integer {
     type Output = Integer;
     fn mul(self, rhs: Self) -> Self::Output {
-        Integer(self.0 * rhs.0)
+        let mut output = self.clone();
+        output *= &rhs;
+        output
+    }
+}
+
+impl MulAssign<&Integer> for Integer {
+    fn mul_assign(&mut self, rhs: &Integer) {
+        self.0 *= &rhs.0;
+    }
+}
+
+impl Div<Integer> for Integer {
+    type Output = Integer;
+    fn div(self, rhs: Self) -> Self::Output {
+        let mut output = self.clone();
+        output /= &rhs;
+        output
+    }
+}
+
+impl DivAssign<&Integer> for Integer {
+    fn div_assign(&mut self, rhs: &Integer) {
+        self.0 /= &rhs.0;
     }
 }
 
@@ -74,8 +141,8 @@ impl FromStr for Integer {
     type Err = Errors;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (sign, body) = match s.strip_prefix("-") {
-            None => (Sign::Minus, s),
-            Some(x) => (Sign::Plus, x),
+            None => (Sign::Plus, s),
+            Some(x) => (Sign::Minus, x),
         };
         let body: Vec<u8> = body
             .chars()
@@ -86,8 +153,17 @@ impl FromStr for Integer {
     }
 }
 
-trait Ring: Add + AddAssign + Sub + SubAssign + Neg + Mul + Zero + One + Clone {}
-impl<T> Ring for T where T: Add + AddAssign + Sub + SubAssign + Neg + Mul + Zero + One + Clone {}
+trait AdditiveGroup:
+    Add + Sub + Neg + Zero + for<'a> AddAssign<&'a Self> + for<'a> SubAssign<&'a Self>
+{
+}
+impl<T> AdditiveGroup for T where
+    T: Add + Sub + Neg + Zero + for<'a> AddAssign<&'a Self> + for<'a> SubAssign<&'a Self>
+{
+}
+
+trait Ring: AdditiveGroup + Mul + for<'a> MulAssign<&'a Self> + One + Clone {}
+impl<T> Ring for T where T: AdditiveGroup + Mul + for<'a> MulAssign<&'a Self> + One + Clone {}
 
 /// The exponent of the degree of the polynomail ring, i.e. we are working
 /// mod x^d+1 for d = 2^DEGREE_EXP.
@@ -119,7 +195,7 @@ impl<R: Ring> Zero for CycloPoly<R> {
 }
 
 impl<R: Ring> One for CycloPoly<R> {
-    fn one() -> Self::Output {
+    fn one() -> Self {
         let mut output = Self::zero();
         output.coeffs[0] = R::one();
         output
@@ -139,6 +215,14 @@ impl<R: Ring> Add<CycloPoly<R>> for CycloPoly<R> {
     }
 }
 
+impl<R: Ring> AddAssign<&CycloPoly<R>> for CycloPoly<R> {
+    fn add_assign(&mut self, rhs: &CycloPoly<R>) {
+        for i in 0..DEGREE {
+            self.coeffs[i] += &rhs.coeffs[i];
+        }
+    }
+}
+
 impl<R: Ring + Sub<Output = R>> Sub<CycloPoly<R>> for CycloPoly<R> {
     type Output = CycloPoly<R>;
     fn sub(self, rhs: CycloPoly<R>) -> Self::Output {
@@ -152,6 +236,14 @@ impl<R: Ring + Sub<Output = R>> Sub<CycloPoly<R>> for CycloPoly<R> {
     }
 }
 
+impl<R: Ring> SubAssign<&CycloPoly<R>> for CycloPoly<R> {
+    fn sub_assign(&mut self, rhs: &CycloPoly<R>) {
+        for i in 0..DEGREE {
+            self.coeffs[i] -= &rhs.coeffs[i];
+        }
+    }
+}
+
 /// Multiplication specialized to mod x^d+1.
 /// Does (full) polynomial multiplication, then manually reduces things
 impl<R: Ring> Mul<CycloPoly<R>> for CycloPoly<R> {
@@ -159,23 +251,22 @@ impl<R: Ring> Mul<CycloPoly<R>> for CycloPoly<R> {
     fn mul(self, rhs: CycloPoly<R>) -> Self::Output {
         let mut unreduced_res = CycloPoly::<R>::zero();
         unreduced_res.coeffs.extend(CycloPoly::<R>::zero().coeffs);
+        let mut temp = R::zero();
         for (i, val) in unreduced_res.coeffs.iter_mut().enumerate() {
             for j in 0..=i {
                 // When indexing should work
                 if j < DEGREE && i < DEGREE + j {
-                    *val += self.coeffs[j].clone() * rhs.coeffs[i - j].clone();
+                    temp = self.coeffs[j].clone();
+                    temp *= &rhs.coeffs[i - j];
+                    *val += &temp;
                 }
             }
         }
         // reduction step
         let mut res = CycloPoly::<R>::zero();
         for (i, val) in res.coeffs.iter_mut().enumerate() {
-            // Would have expected these two operations to be the other way around
-            // But it matches up with my SAGE test cases.
-            // Worst case this introduces a sign error (that will be consistent throughout
-            // hopefully)
-            *val -= unreduced_res.coeffs[i].clone();
-            *val += unreduced_res.coeffs[DEGREE + i].clone();
+            *val += &unreduced_res.coeffs[i];
+            *val -= &unreduced_res.coeffs[DEGREE + i];
         }
         res
     }
@@ -229,6 +320,26 @@ mod tests {
             results.push((p1, p2, p3));
         }
         results
+    }
+    fn modulo_verify(q: i32) -> bool {
+        let big_q: Integer = Integer::from(q);
+        let lower_idx = ((-q) >> 1) as i32;
+        let upper_idx = (q >> 1) as i32;
+        for i in lower_idx..upper_idx {
+            let expected_int = Integer::from(i);
+            let mut test_int = expected_int.clone();
+            test_int += &big_q;
+            Integer::modulo_assign(&mut test_int, &big_q);
+            if dbg!(expected_int) != dbg!(test_int) {
+                return false;
+            }
+        }
+        true
+    }
+    #[test]
+    fn test_modulo() {
+        assert!(modulo_verify(11));
+        assert!(modulo_verify(12));
     }
 
     #[test]
