@@ -239,6 +239,7 @@ mod tests {
         }
     }
     #[test]
+    #[ignore]
     fn test_multiplication() {
         let test_cases = read_from_file("src/arith/mul_test_cases.txt");
         for (p1, p2, p3) in test_cases.into_iter() {
