@@ -6,22 +6,20 @@
 
 use crate::{
     utils::{CDT_table, RandGenerator},
-    Errors, N,
+    Errors, DEGREE,
 };
 use num_bigint::{BigInt, Sign};
 use num_traits::identities::{One, Zero};
 use std::{
     ops::{
-        Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Shl, ShlAssign, Sub,
-        SubAssign,
+        Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Shl, ShlAssign, Shr,
+        ShrAssign, Sub, SubAssign,
     },
     str::FromStr,
 };
 
-use crate::DEGREE;
-
 #[derive(Clone, Eq, PartialEq, Debug)]
-pub(crate) struct Integer(BigInt);
+pub(crate) struct Integer(pub(crate) BigInt);
 
 #[macro_export]
 macro_rules! impl_assign {
@@ -84,37 +82,63 @@ impl Shl<usize> for Integer {
     }
 }
 
+impl ShrAssign<usize> for Integer {
+    fn shr_assign(&mut self, rhs: usize) {
+        self.0 >>= rhs;
+    }
+}
+impl Shr<usize> for Integer {
+    type Output = Integer;
+    fn shr(self, rhs: usize) -> Self::Output {
+        let mut output = self.clone();
+        output >>= rhs;
+        output
+    }
+}
+
 impl Integer {
     /// Centered reduction to an integer in (-q/2, q/2].
     ///
     /// Formula via case analysis of parity of q mod 2
     fn modulo_assign(&mut self, rhs: &Integer) {
         let mut shift = rhs.clone();
-        shift.0 /= 2_i32;
-
-        let mut parity = rhs.clone();
-        parity.0 %= 2_i32;
-        // Mapping parity -> 1 - parity
-        parity.0 -= 1_i32;
-
-        let mut div_2 = rhs.clone();
-        div_2 /= rhs;
+        shift.0 -= 1_i32;
+        shift >>= 1;
+        dbg!(&shift);
+        *self += &shift;
         *self %= rhs;
-        *self -= &div_2;
-        *self += &parity;
+        *self -= &shift;
     }
     fn modulo(self, rhs: Integer) -> Self {
         let mut output = self.clone();
         Integer::modulo_assign(&mut output, &rhs);
         output
     }
-    fn uniform_sample(rng: &RandGenerator, modulus: &Integer) -> Self {
-        let mut buff = [0 as u8; 1 + (N / 8)];
+    fn uniform_sample<const MOD_EXP_BYTES_PLUS_ONE: usize>(
+        rng: &RandGenerator,
+        modulus: &Integer,
+    ) -> Self {
+        let mut buff = [0 as u8; MOD_EXP_BYTES_PLUS_ONE];
         rng.fill(&mut buff)
             .expect("RNG Error: Will not try to recover from");
         let mut output = Integer(BigInt::from_bytes_be(Sign::Plus, &buff));
         output.modulo_assign(modulus);
         output
+    }
+    /// Distance to the nearest multiple of q.
+    fn modulo_norm(&self, q: &Integer) -> Integer {
+        let mut res = self.clone();
+        res %= &q;
+        let mut candidate = res.clone();
+        res = -res;
+        res += &q;
+        // Both res and candidate should be in [0, q)
+        // smaller one is the size.
+        if res.0 < candidate.0 {
+            res
+        } else {
+            candidate
+        }
     }
 }
 
@@ -357,12 +381,26 @@ impl CycloPoly<Integer> {
         }
         output
     }
-    pub(crate) fn uniform_sample(rng: &RandGenerator, modulus: &Integer) -> Self {
+    pub(crate) fn uniform_sample<const MOD_EXP_BYTES_PLUS_ONE: usize>(
+        rng: &RandGenerator,
+        modulus: &Integer,
+    ) -> Self {
         let mut output = Self::zero();
         for i in 0..DEGREE {
-            output.coeffs[i] = Integer::uniform_sample(rng, modulus);
+            output.coeffs[i] = Integer::uniform_sample::<MOD_EXP_BYTES_PLUS_ONE>(rng, modulus);
         }
         output
+    }
+    /// L_infty form of the modulus norm
+    pub(crate) fn max_norm(self, q: &Integer) -> Integer {
+        let mut out = Integer::zero();
+        for i in 0..DEGREE {
+            let size = self.coeffs[i].modulo_norm(&q);
+            if size.0 > out.0 {
+                out = size;
+            }
+        }
+        out
     }
 }
 
@@ -410,7 +448,6 @@ mod tests {
             let p1 = CycloPoly::<Integer>::from_str(batch[0]).expect("p1 parses");
             let p2 = CycloPoly::<Integer>::from_str(batch[1]).expect("p2 parses");
             let p3 = CycloPoly::<Integer>::from_str(batch[2]).expect("p3 parses");
-
             results.push((p1, p2, p3));
         }
         results
@@ -418,6 +455,12 @@ mod tests {
     // non-centered reduction
     fn rem_verify(q: i32) -> bool {
         let big_q: Integer = q.into();
+        let mut test: Integer = (-1).into();
+        let not_expected = test.clone();
+        test %= &not_expected;
+        if &test == &not_expected {
+            return false;
+        }
         for i in 0..q {
             let expected: Integer = i.into();
             let mut test = expected.clone();
@@ -454,35 +497,25 @@ mod tests {
         test_reduction.modulo_assign(&moduli);
         assert_eq!(&test_reduction, &reduced);
     }
-    fn modulo_verify(q: i32) -> bool {
-        let mod2 = q % 2;
-        let div2 = q / 2;
-        let big_q: Integer = Integer::from(q);
-        let mut lower = 0;
-        let mut upper = q;
-        lower -= div2 + (1 - mod2);
-        upper -= div2 + (1 - mod2);
-        dbg!(q);
-        dbg!(lower);
-        dbg!(upper);
-        for i in lower..upper {
-            let expected_int = Integer::from(i);
-            let mut test_int = expected_int.clone();
-            test_int += &big_q;
-            Integer::modulo_assign(&mut test_int, &big_q);
-            if dbg!(expected_int) != dbg!(test_int) {
-                return false;
-            }
-        }
-        true
-    }
     #[test]
-    fn test_modulo() {
-        assert!(modulo_verify(11));
-        assert!(modulo_verify(12));
+    fn modulo_three_test() {
+        let moduli: Integer = 3_i32.into();
+        for i in -1..=1 {
+            let reduced: Integer = i.into();
+            let mut test_reduction = reduced.clone();
+            test_reduction.modulo_assign(&moduli);
+            assert_eq!(&test_reduction, &reduced);
+        }
+        for i in 2..=4 {
+            let reduced: Integer = (i - 3).into();
+            let mut test_reduction: Integer = i.into();
+            test_reduction.modulo_assign(&moduli);
+            assert_eq!(&test_reduction, &reduced);
+        }
     }
 
     #[test]
+    #[ignore]
     fn test_addition() {
         let test_cases = read_from_file("src/arith/add_test_cases.txt");
         for (p1, p2, p3) in test_cases.into_iter() {

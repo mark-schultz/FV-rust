@@ -38,7 +38,7 @@ impl RandGenerator {
 pub(crate) struct CDT_table {
     pub(crate) rng: RandGenerator,
     probs: HashMap<i32, f64>,
-    bound: i32,
+    pub(crate)bound: i32,
 }
 
 impl CDT_table {
