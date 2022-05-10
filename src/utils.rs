@@ -9,19 +9,19 @@ use std::{
 };
 
 #[derive(Clone, Debug)]
-struct RandGenerator {
-    rng: Arc<Mutex<dyn SecureRandom>>,
+pub(crate) struct RandGenerator {
+    pub(crate) rng: Arc<Mutex<dyn SecureRandom>>,
 }
 
 impl RandGenerator {
-    fn fill(&self, dest: &mut [u8]) -> Result<(), Errors> {
+    pub(crate) fn fill(&self, dest: &mut [u8]) -> Result<(), Errors> {
         self.rng
             .lock()
             .map_err(|_| Errors::RNGError)?
             .fill(dest)
             .map_err(|_| Errors::RNGError)
     }
-    fn new() -> Self {
+    pub(crate)fn new() -> Self {
         let rng = Arc::new(Mutex::new(SystemRandom::new()));
         RandGenerator { rng }
     }
@@ -35,14 +35,14 @@ impl RandGenerator {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug)]
-struct CDT_table {
-    rng: RandGenerator,
+pub(crate) struct CDT_table {
+    pub(crate) rng: RandGenerator,
     probs: HashMap<i32, f64>,
     bound: i32,
 }
 
 impl CDT_table {
-    fn new(rng: &RandGenerator, sigma: f64) -> Self {
+    pub(crate) fn new(rng: &RandGenerator, sigma: f64) -> Self {
         // Tail cut
         let bound = (10. * sigma.ceil()) as i32;
         let mut probs: HashMap<i32, f64> = HashMap::new();
@@ -58,7 +58,7 @@ impl CDT_table {
         let rng = rng.clone();
         CDT_table { rng, probs, bound }
     }
-    fn sample(&self) -> i32 {
+    pub(crate) fn sample(&self) -> i32 {
         // Typical way of generating a uniformly random (in [0,1]) double.
         // 53 as f64's have 53 bit exponents
         let mut buff = [0 as u8; 64 / 8];

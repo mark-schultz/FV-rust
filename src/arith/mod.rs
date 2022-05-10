@@ -4,47 +4,116 @@
 //! Sample parameters (just before Section 7) are q = 2^n and d = 2^k for k= 10, n > 1358.
 #![allow(dead_code)]
 
-use crate::Errors;
+use crate::{
+    utils::{CDT_table, RandGenerator},
+    Errors, N,
+};
 use num_bigint::{BigInt, Sign};
 use num_traits::identities::{One, Zero};
 use std::{
-    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
+    ops::{
+        Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Shl, ShlAssign, Sub,
+        SubAssign,
+    },
     str::FromStr,
 };
 
-#[derive(Clone, Eq, PartialEq, Debug)]
-struct Integer(BigInt);
+use crate::DEGREE;
 
-/// Note: % does the NON-CENTERED reduction.
-/// FV frequently uses centered reductions, which we do separately.
-impl Rem<Integer> for Integer {
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub(crate) struct Integer(BigInt);
+
+#[macro_export]
+macro_rules! impl_assign {
+    ( $trait_name:ident, $fun_name:ident, $type: ty, $backing_type:ty) => {
+        impl $trait_name<&$type> for $type {
+            fn $fun_name(&mut self, rhs: &$type) {
+                <$backing_type>::$fun_name(&mut self.0, &rhs.0);
+            }
+        }
+    };
+}
+use impl_assign;
+
+#[macro_export]
+macro_rules! impl_consuming {
+    ( $trait_name:ident, $assigning_fun_name:ident, $fun_name:ident, $type: ty) => {
+        impl $trait_name<$type> for $type {
+            type Output = $type;
+            fn $fun_name(self, rhs: $type) -> Self::Output {
+                let mut output = self.clone();
+                output.$assigning_fun_name(&rhs);
+                output
+            }
+        }
+    };
+}
+use impl_consuming;
+
+#[macro_export]
+macro_rules! impl_op {
+    ( $assigning_trait_name:ident, $trait_name:ident, $assigning_fun_name:ident, $fun_name:ident, $type: ty, $backing_type:ty) => {
+        impl_assign!(
+            $assigning_trait_name,
+            $assigning_fun_name,
+            $type,
+            $backing_type
+        );
+        impl_consuming!($trait_name, $assigning_fun_name, $fun_name, $type);
+    };
+}
+use impl_op;
+
+impl_op!(AddAssign, Add, add_assign, add, Integer, BigInt);
+impl_op!(SubAssign, Sub, sub_assign, sub, Integer, BigInt);
+impl_op!(MulAssign, Mul, mul_assign, mul, Integer, BigInt);
+impl_op!(DivAssign, Div, div_assign, div, Integer, BigInt);
+impl_op!(RemAssign, Rem, rem_assign, rem, Integer, BigInt);
+
+impl ShlAssign<usize> for Integer {
+    fn shl_assign(&mut self, rhs: usize) {
+        self.0 <<= rhs;
+    }
+}
+impl Shl<usize> for Integer {
     type Output = Integer;
-    fn rem(self, rhs: Self) -> Self::Output {
+    fn shl(self, rhs: usize) -> Self::Output {
         let mut output = self.clone();
-        output %= &rhs;
+        output <<= rhs;
         output
     }
 }
 
-impl RemAssign<&Integer> for Integer {
-    fn rem_assign(&mut self, rhs: &Integer) {
-        self.0 %= &rhs.0;
-    }
-}
-
 impl Integer {
-    /// Centered reduction
+    /// Centered reduction to an integer in (-q/2, q/2].
+    ///
+    /// Formula via case analysis of parity of q mod 2
     fn modulo_assign(&mut self, rhs: &Integer) {
+        let mut shift = rhs.clone();
+        shift.0 /= 2_i32;
+
+        let mut parity = rhs.clone();
+        parity.0 %= 2_i32;
+        // Mapping parity -> 1 - parity
+        parity.0 -= 1_i32;
+
+        let mut div_2 = rhs.clone();
+        div_2 /= rhs;
         *self %= rhs;
-        let mut temp = rhs.clone();
-        temp.0 /= 2_i32;
-        if self.0 >= temp.0 {
-            *self -= &rhs;
-        }
+        *self -= &div_2;
+        *self += &parity;
     }
     fn modulo(self, rhs: Integer) -> Self {
         let mut output = self.clone();
         Integer::modulo_assign(&mut output, &rhs);
+        output
+    }
+    fn uniform_sample(rng: &RandGenerator, modulus: &Integer) -> Self {
+        let mut buff = [0 as u8; 1 + (N / 8)];
+        rng.fill(&mut buff)
+            .expect("RNG Error: Will not try to recover from");
+        let mut output = Integer(BigInt::from_bytes_be(Sign::Plus, &buff));
+        output.modulo_assign(modulus);
         output
     }
 }
@@ -55,70 +124,10 @@ impl From<i32> for Integer {
     }
 }
 
-impl Add<Integer> for Integer {
-    type Output = Integer;
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut output = self.clone();
-        output += &rhs;
-        output
-    }
-}
-
-impl AddAssign<&Integer> for Integer {
-    fn add_assign(&mut self, rhs: &Integer) {
-        self.0 += &rhs.0
-    }
-}
-
 impl Neg for Integer {
     type Output = Integer;
     fn neg(self) -> Self::Output {
         Integer(-self.0)
-    }
-}
-
-impl Sub<Integer> for Integer {
-    type Output = Integer;
-    fn sub(self, rhs: Self) -> Self::Output {
-        let mut output = self.clone();
-        output -= &rhs;
-        output
-    }
-}
-
-impl SubAssign<&Integer> for Integer {
-    fn sub_assign(&mut self, rhs: &Integer) {
-        self.0 -= &rhs.0
-    }
-}
-
-impl Mul<Integer> for Integer {
-    type Output = Integer;
-    fn mul(self, rhs: Self) -> Self::Output {
-        let mut output = self.clone();
-        output *= &rhs;
-        output
-    }
-}
-
-impl MulAssign<&Integer> for Integer {
-    fn mul_assign(&mut self, rhs: &Integer) {
-        self.0 *= &rhs.0;
-    }
-}
-
-impl Div<Integer> for Integer {
-    type Output = Integer;
-    fn div(self, rhs: Self) -> Self::Output {
-        let mut output = self.clone();
-        output /= &rhs;
-        output
-    }
-}
-
-impl DivAssign<&Integer> for Integer {
-    fn div_assign(&mut self, rhs: &Integer) {
-        self.0 /= &rhs.0;
     }
 }
 
@@ -154,26 +163,29 @@ impl FromStr for Integer {
     }
 }
 
-trait AdditiveGroup:
-    Add + Sub + Neg + Zero + for<'a> AddAssign<&'a Self> + for<'a> SubAssign<&'a Self>
+pub(crate) trait AdditiveGroup:
+    Add + Sub + Neg<Output = Self> + Zero + for<'a> AddAssign<&'a Self> + for<'a> SubAssign<&'a Self>
 {
 }
 impl<T> AdditiveGroup for T where
-    T: Add + Sub + Neg + Zero + for<'a> AddAssign<&'a Self> + for<'a> SubAssign<&'a Self>
+    T: Add
+        + Sub
+        + Neg<Output = Self>
+        + Zero
+        + for<'a> AddAssign<&'a Self>
+        + for<'a> SubAssign<&'a Self>
 {
 }
 
-trait Ring: AdditiveGroup + Mul + for<'a> MulAssign<&'a Self> + One + Clone {}
+pub(crate) trait Ring:
+    AdditiveGroup + Mul + for<'a> MulAssign<&'a Self> + One + Clone
+{
+}
 impl<T> Ring for T where T: AdditiveGroup + Mul + for<'a> MulAssign<&'a Self> + One + Clone {}
-
-/// The exponent of the degree of the polynomail ring, i.e. we are working
-/// mod x^d+1 for d = 2^DEGREE_EXP.
-const DEGREE_EXP: usize = 10;
-const DEGREE: usize = 1 << DEGREE_EXP;
 
 /// Index into coeffs is the degree, i.e. coeffs[0] is constant term.
 #[derive(Clone, Eq, PartialEq, Debug)]
-struct CycloPoly<R: Ring> {
+pub(crate) struct CycloPoly<R: Ring> {
     coeffs: Vec<R>,
 }
 
@@ -203,53 +215,84 @@ impl<R: Ring> One for CycloPoly<R> {
     }
 }
 
-impl<R: Ring> Add<CycloPoly<R>> for CycloPoly<R> {
-    type Output = CycloPoly<R>;
-    fn add(self, rhs: CycloPoly<R>) -> Self::Output {
-        let coeffs: Vec<R> = self
-            .coeffs
-            .into_iter()
-            .zip(rhs.coeffs.into_iter())
-            .map(|(a, b)| a + b)
-            .collect();
-        Self { coeffs }
-    }
+#[macro_export]
+macro_rules! impl_assign_ring {
+    ( $trait_name:ident, $fun_name:ident) => {
+        impl<R: Ring> $trait_name<&CycloPoly<R>> for CycloPoly<R> {
+            fn $fun_name(&mut self, rhs: &CycloPoly<R>) {
+                for i in 0..DEGREE {
+                    <R>::$fun_name(&mut self.coeffs[i], &rhs.coeffs[i]);
+                }
+            }
+        }
+    };
 }
+use impl_assign_ring;
 
-impl<R: Ring> AddAssign<&CycloPoly<R>> for CycloPoly<R> {
-    fn add_assign(&mut self, rhs: &CycloPoly<R>) {
+#[macro_export]
+macro_rules! impl_consuming_ring {
+    ( $trait_name:ident, $assigning_fun_name:ident, $fun_name:ident) => {
+        impl<R: Ring> $trait_name<CycloPoly<R>> for CycloPoly<R> {
+            type Output = CycloPoly<R>;
+            fn $fun_name(self, rhs: CycloPoly<R>) -> Self::Output {
+                let mut output = self.clone();
+                output.$assigning_fun_name(&rhs);
+                output
+            }
+        }
+    };
+}
+use impl_consuming_ring;
+
+#[macro_export]
+macro_rules! impl_op_ring {
+    ( $assigning_trait_name:ident, $trait_name:ident, $assigning_fun_name:ident, $fun_name:ident) => {
+        impl_assign_ring!($assigning_trait_name, $assigning_fun_name);
+        impl_consuming_ring!($trait_name, $assigning_fun_name, $fun_name);
+    };
+}
+use impl_op_ring;
+
+impl_op_ring!(AddAssign, Add, add_assign, add);
+impl_op_ring!(SubAssign, Sub, sub_assign, sub);
+
+impl<R: Ring + for<'a> RemAssign<&'a R>> RemAssign<&R> for CycloPoly<R> {
+    fn rem_assign(&mut self, rhs: &R) {
         for i in 0..DEGREE {
-            self.coeffs[i] += &rhs.coeffs[i];
+            self.coeffs[i] %= rhs;
         }
     }
 }
 
-impl<R: Ring + Sub<Output = R>> Sub<CycloPoly<R>> for CycloPoly<R> {
-    type Output = CycloPoly<R>;
-    fn sub(self, rhs: CycloPoly<R>) -> Self::Output {
-        let coeffs: Vec<R> = self
-            .coeffs
-            .into_iter()
-            .zip(rhs.coeffs.into_iter())
-            .map(|(a, b)| a - b)
-            .collect();
-        Self { coeffs }
+impl<R: Ring + for<'a> DivAssign<&'a R>> DivAssign<&R> for CycloPoly<R> {
+    fn div_assign(&mut self, rhs: &R) {
+        for i in 0..DEGREE {
+            self.coeffs[i] /= rhs;
+        }
     }
 }
 
-impl<R: Ring> SubAssign<&CycloPoly<R>> for CycloPoly<R> {
-    fn sub_assign(&mut self, rhs: &CycloPoly<R>) {
-        for i in 0..DEGREE {
-            self.coeffs[i] -= &rhs.coeffs[i];
-        }
+impl<R: Ring> Neg for CycloPoly<R> {
+    type Output = CycloPoly<R>;
+    fn neg(self) -> Self::Output {
+        let coeffs = self.coeffs.into_iter().map(|c| c.neg()).collect();
+        CycloPoly { coeffs }
+    }
+}
+
+impl<R: Ring> Mul<CycloPoly<R>> for CycloPoly<R> {
+    type Output = CycloPoly<R>;
+    fn mul(self, rhs: CycloPoly<R>) -> Self::Output {
+        let mut output = self.clone();
+        output *= &rhs;
+        output
     }
 }
 
 /// Multiplication specialized to mod x^d+1.
 /// Does (full) polynomial multiplication, then manually reduces things
-impl<R: Ring> Mul<CycloPoly<R>> for CycloPoly<R> {
-    type Output = CycloPoly<R>;
-    fn mul(self, rhs: CycloPoly<R>) -> Self::Output {
+impl<R: Ring> MulAssign<&CycloPoly<R>> for CycloPoly<R> {
+    fn mul_assign(&mut self, rhs: &CycloPoly<R>) {
         let mut unreduced_res = CycloPoly::<R>::zero();
         unreduced_res.coeffs.extend(CycloPoly::<R>::zero().coeffs);
         for (i, val) in unreduced_res.coeffs.iter_mut().enumerate() {
@@ -263,42 +306,62 @@ impl<R: Ring> Mul<CycloPoly<R>> for CycloPoly<R> {
             }
         }
         // reduction step
-        let mut res = CycloPoly::<R>::zero();
-        for (i, val) in res.coeffs.iter_mut().enumerate() {
+        for (i, val) in self.coeffs.iter_mut().enumerate() {
+            *val = R::zero();
             *val += &unreduced_res.coeffs[i];
             *val -= &unreduced_res.coeffs[DEGREE + i];
         }
-        res
     }
 }
 
-impl Rem<Integer> for CycloPoly<Integer> {
-    type Output = CycloPoly<Integer>;
-    fn rem(self, rhs: Integer) -> Self::Output {
-        let mut output = self.clone();
-        output %= &rhs;
-        output
-    }
-}
-
-impl RemAssign<&Integer> for CycloPoly<Integer> {
-    fn rem_assign(&mut self, rhs: &Integer) {
+impl MulAssign<&Integer> for CycloPoly<Integer> {
+    fn mul_assign(&mut self, rhs: &Integer) {
         for i in 0..DEGREE {
-            self.coeffs[i] %= &rhs;
+            self.coeffs[i] *= rhs;
         }
+    }
+}
+
+impl Mul<Integer> for CycloPoly<Integer> {
+    type Output = CycloPoly<Integer>;
+    fn mul(self, rhs: Integer) -> Self::Output {
+        let mut output = self.clone();
+        output *= &rhs;
+        output
     }
 }
 
 impl CycloPoly<Integer> {
     /// Centered reduction
-    fn modulo_assign(&mut self, rhs: &Integer) {
+    pub(crate) fn modulo_assign(&mut self, rhs: &Integer) {
         for i in 0..DEGREE {
             self.coeffs[i].modulo_assign(rhs);
         }
     }
-    fn modulo(self, rhs: Integer) -> Self {
+    pub(crate) fn modulo(self, rhs: Integer) -> Self {
         let mut output = self.clone();
         output.modulo_assign(&rhs);
+        output
+    }
+    pub(crate) fn all_ones() -> Self {
+        let mut output = Self::zero();
+        for i in 0..DEGREE {
+            output.coeffs[i] = Integer::one();
+        }
+        output
+    }
+    pub(crate) fn sample(dist: &CDT_table) -> Self {
+        let mut output = Self::zero();
+        for i in 0..DEGREE {
+            output.coeffs[i] = dist.sample().into();
+        }
+        output
+    }
+    pub(crate) fn uniform_sample(rng: &RandGenerator, modulus: &Integer) -> Self {
+        let mut output = Self::zero();
+        for i in 0..DEGREE {
+            output.coeffs[i] = Integer::uniform_sample(rng, modulus);
+        }
         output
     }
 }
@@ -352,11 +415,57 @@ mod tests {
         }
         results
     }
+    // non-centered reduction
+    fn rem_verify(q: i32) -> bool {
+        let big_q: Integer = q.into();
+        for i in 0..q {
+            let expected: Integer = i.into();
+            let mut test = expected.clone();
+            test %= &big_q;
+            if &expected != &test {
+                return false;
+            }
+        }
+        for i in q..(2 * q) {
+            let expected: Integer = (i % q).into();
+            let mut test = expected.clone();
+            test %= &big_q;
+            if &expected != &test {
+                return false;
+            }
+        }
+        true
+    }
+    #[test]
+    fn test_rem() {
+        assert!(rem_verify(11));
+        assert!(rem_verify(12));
+    }
+
+    #[test]
+    fn modulo_two_test() {
+        let moduli: Integer = 2_i32.into();
+        let reduced = Integer::zero();
+        let mut test_reduction = Integer::zero();
+        test_reduction.modulo_assign(&moduli);
+        assert_eq!(&test_reduction, &reduced);
+        let reduced = Integer::one();
+        let mut test_reduction = Integer::one();
+        test_reduction.modulo_assign(&moduli);
+        assert_eq!(&test_reduction, &reduced);
+    }
     fn modulo_verify(q: i32) -> bool {
+        let mod2 = q % 2;
+        let div2 = q / 2;
         let big_q: Integer = Integer::from(q);
-        let lower_idx = ((-q) >> 1) as i32;
-        let upper_idx = (q >> 1) as i32;
-        for i in lower_idx..upper_idx {
+        let mut lower = 0;
+        let mut upper = q;
+        lower -= div2 + (1 - mod2);
+        upper -= div2 + (1 - mod2);
+        dbg!(q);
+        dbg!(lower);
+        dbg!(upper);
+        for i in lower..upper {
             let expected_int = Integer::from(i);
             let mut test_int = expected_int.clone();
             test_int += &big_q;
