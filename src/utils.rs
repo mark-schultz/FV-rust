@@ -21,7 +21,7 @@ impl RandGenerator {
             .fill(dest)
             .map_err(|_| Errors::RNGError)
     }
-    pub(crate)fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let rng = Arc::new(Mutex::new(SystemRandom::new()));
         RandGenerator { rng }
     }
@@ -38,7 +38,7 @@ impl RandGenerator {
 pub(crate) struct CDT_table {
     pub(crate) rng: RandGenerator,
     probs: HashMap<i32, f64>,
-    pub(crate)bound: i32,
+    pub(crate) bound: i32,
 }
 
 impl CDT_table {
@@ -86,6 +86,8 @@ mod tests {
 
     // Testing could be greatly improved using the GLITCH test suite
     // https://eprint.iacr.org/2017/438
+    // Additionally, many other sampling techniques are better for large sigma, for example
+    // convolution sampling.
     use super::*;
     #[test]
     fn test_table_gen() {

@@ -18,6 +18,9 @@ const Q_EXP_BYTES_PLUS_1: usize = Q_EXP / 8 + 1;
 const T_EXP: usize = 1;
 const T_EXP_BYTES_PLUS_1: usize = T_EXP / 8 + 1;
 
+const RELIN_BASE: i32 = 2;
+const RELIN_TERMS: usize = Q_EXP; // floor(log_T(q))
+
 #[derive(Debug)]
 pub enum Errors {
     ParseIntError,

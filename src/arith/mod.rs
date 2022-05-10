@@ -6,7 +6,7 @@
 
 use crate::{
     utils::{CDT_table, RandGenerator},
-    Errors, DEGREE,
+    Errors, DEGREE, RELIN_BASE, RELIN_TERMS,
 };
 use num_bigint::{BigInt, Sign};
 use num_traits::identities::{One, Zero};
@@ -101,11 +101,9 @@ impl Integer {
     ///
     /// Formula via case analysis of parity of q mod 2
     fn modulo_assign(&mut self, rhs: &Integer) {
-        dbg!(&self);
         let mut shift = rhs.clone();
         shift.0 -= 1_i32;
         shift >>= 1;
-        dbg!(&shift);
         *self += &shift;
         *self %= rhs;
         *self -= &shift;
@@ -156,6 +154,19 @@ impl Integer {
     fn decode(&mut self, q: &Integer) {
         *self += &self.modulo_norm(q);
         *self /= &q;
+    }
+
+    fn base_decompose(self) -> Vec<Integer> {
+        let base: Integer = RELIN_BASE.into();
+        let mut out = Vec::new();
+        let mut remaining = self.clone();
+        for _ in 0..=RELIN_TERMS {
+            let mut digit = remaining.clone();
+            digit %= &base;
+            remaining /= &base;
+            out.push(digit);
+        }
+        out
     }
 }
 
@@ -408,6 +419,11 @@ impl CycloPoly<Integer> {
         }
         output
     }
+    pub(crate) fn binary_sample(rng: &RandGenerator) -> Self {
+        let modulus: Integer = 2_i32.into();
+        Self::uniform_sample::<1>(&rng, &modulus)
+    }
+
     /// L_infty form of the modulus norm
     pub(crate) fn max_norm(self, q: &Integer) -> Integer {
         let mut out = Integer::zero();
@@ -430,6 +446,25 @@ impl CycloPoly<Integer> {
         for i in 0..DEGREE {
             self.coeffs[i].decode(&q);
         }
+    }
+
+    pub(crate) fn base_decompose(self) -> Vec<CycloPoly<Integer>> {
+        let mut tmp = Vec::new();
+        for i in 0..DEGREE {
+            let digits = self.coeffs[i].clone().base_decompose(); // Vec<Integer>
+            tmp.push(digits);
+        }
+        let mut out = Vec::new();
+        for j in 0..=RELIN_TERMS {
+            let mut digit_poly_coeffs = Vec::new();
+            for i in 0..DEGREE {
+                digit_poly_coeffs.push(tmp[i][j].clone());
+            }
+            out.push(CycloPoly {
+                coeffs: digit_poly_coeffs,
+            });
+        }
+        out
     }
 }
 
@@ -568,7 +603,6 @@ mod tests {
         let ref_m = m.clone();
         m.encode(&q);
         for noise_idx in -511..512 {
-            dbg!(&noise_idx);
             let noise: Integer = noise_idx.into();
             let mut noised_m = m.clone();
             noised_m += &noise;
@@ -585,5 +619,49 @@ mod tests {
         let modulus: Integer = 2_i32.into();
         val_to_mod.modulo_assign(&modulus);
         assert_eq!(&val_to_mod, &expected);
+    }
+    #[test]
+    fn test_base_decompose() {
+        let base: Integer = RELIN_BASE.into();
+        // 1 + 1*base + 1 * base^2
+        let one = Integer::one();
+        let mut val = one.clone();
+        val *= &base;
+        val += &one;
+        val *= &base;
+        val += &one;
+        let decomp = val.base_decompose();
+        let mut expected = Vec::new();
+        for i in 0..=RELIN_TERMS {
+            match i {
+                0 | 1 | 2 => {
+                    expected.push(Integer::one());
+                }
+                _ => {
+                    expected.push(Integer::zero());
+                }
+            }
+        }
+        assert_eq!(&expected, &decomp);
+    }
+    #[test]
+    fn test_base_decompose_poly() {
+        // Decompose random poly, then reconstruct.
+        let rng = RandGenerator::new();
+        let modulus: Integer = (1 << 10).into();
+        let poly = CycloPoly::uniform_sample::<{ 1 + 1 << 7 }>(&rng, &modulus);
+        let expected = poly.clone();
+        let decomposed_poly = poly.base_decompose();
+
+        let base: Integer = RELIN_BASE.into();
+        let mut multiplier = Integer::one();
+        let mut reconstructed = CycloPoly::<Integer>::zero();
+        for i in 0..=RELIN_TERMS {
+            let mut digit_poly = decomposed_poly[i].clone();
+            digit_poly *= &multiplier;
+            reconstructed += &digit_poly;
+            multiplier *= &base;
+        }
+        assert_eq!(&expected, &reconstructed);
     }
 }

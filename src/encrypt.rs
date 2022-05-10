@@ -1,11 +1,10 @@
 //! Encryption Scheme
 
-use std::ops::AddAssign;
+use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 
 use crate::arith::{CycloPoly, Integer};
 use crate::utils::{CDT_table, RandGenerator};
-use crate::{DELTA_R, Q_EXP, Q_EXP_BYTES_PLUS_1, SIGMA, T_EXP, T_EXP_BYTES_PLUS_1};
-use num_traits::identities::{Zero};
+use crate::{Q_EXP, Q_EXP_BYTES_PLUS_1, RELIN_TERMS, SIGMA, T_EXP};
 
 struct LPR {
     gauss_dist: CDT_table,
@@ -17,20 +16,16 @@ struct LPR {
 
 struct SecretKey(CycloPoly<Integer>);
 struct PublicKey(CycloPoly<Integer>, CycloPoly<Integer>);
+struct RelinearizationKey(Vec<(CycloPoly<Integer>, CycloPoly<Integer>)>);
+#[derive(Clone)]
 struct CipherText(CycloPoly<Integer>, CycloPoly<Integer>);
 struct PtxtModuli(Integer);
 struct CtxtModuli(Integer);
 
-impl AddAssign<&CipherText> for CipherText {
-    fn add_assign(&mut self, rhs: &CipherText) {
-        self.0 += &rhs.0;
-        self.1 += &rhs.1;
-    }
-}
-
 impl LPR {
     fn sk_gen(dist: &CDT_table) -> SecretKey {
-        SecretKey(CycloPoly::<Integer>::sample(dist))
+        // Binary secrets optimization
+        SecretKey(CycloPoly::<Integer>::binary_sample(&dist.rng))
     }
     fn pk_gen(dist: &CDT_table, sk: &SecretKey, modulus: &CtxtModuli) -> PublicKey {
         let a = CycloPoly::uniform_sample::<Q_EXP_BYTES_PLUS_1>(&dist.rng, &modulus.0);
@@ -42,6 +37,24 @@ impl LPR {
         b.modulo_assign(&modulus.0);
         PublicKey(b, a)
     }
+    fn rlk_gen(dist: &CDT_table, sk: &SecretKey, modulus: &CtxtModuli) -> RelinearizationKey {
+        let mut _out: Vec<(CycloPoly<Integer>, CycloPoly<Integer>)> = Vec::new();
+        for _i in 0..=RELIN_TERMS {
+            let a = CycloPoly::uniform_sample::<Q_EXP_BYTES_PLUS_1>(&dist.rng, &modulus.0);
+            let mut b = a.clone();
+            b *= &sk.0;
+            let e = CycloPoly::sample(&dist);
+            b += &e;
+            b = -b;
+            let mut s_squared = sk.0.clone();
+            s_squared *= &sk.0;
+
+            b += &s_squared;
+            b.modulo_assign(&modulus.0);
+        }
+        todo!()
+    }
+
     fn gen_moduli() -> (PtxtModuli, CtxtModuli) {
         let mut ptxt_mod: Integer = 1_i32.into();
         ptxt_mod <<= T_EXP;
@@ -81,14 +94,12 @@ impl LPR {
         m.encode(&delta);
         p0 += &m;
         p0.modulo_assign(&q.0);
-        dbg!(&p0);
 
         let mut p1 = pk.1.clone();
         p1 *= &u;
         let e2 = CycloPoly::<Integer>::sample(&dist);
         p1 += &e2;
         p1.modulo_assign(&q.0);
-        dbg!(&p1);
 
         CipherText(p0, p1)
     }
@@ -106,9 +117,75 @@ impl LPR {
     }
 }
 
+// Can't implement `zero` as we can't implement `is_zero`.
+
+impl AddAssign<&CipherText> for CipherText {
+    fn add_assign(&mut self, rhs: &CipherText) {
+        self.0 += &rhs.0;
+        self.1 += &rhs.1;
+    }
+}
+
+impl Add<CipherText> for CipherText {
+    type Output = CipherText;
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut out = self.clone();
+        out += &rhs;
+        out
+    }
+}
+
+impl SubAssign<&CipherText> for CipherText {
+    fn sub_assign(&mut self, rhs: &CipherText) {
+        self.0 -= &rhs.0;
+        self.1 -= &rhs.1;
+    }
+}
+
+impl Sub<CipherText> for CipherText {
+    type Output = CipherText;
+    fn sub(self, rhs: Self) -> Self::Output {
+        let mut out = self.clone();
+        out -= &rhs;
+        out
+    }
+}
+
+struct UnlinearizedCiphertext(CycloPoly<Integer>, CycloPoly<Integer>, CycloPoly<Integer>);
+
+impl Mul<CipherText> for CipherText {
+    type Output = UnlinearizedCiphertext;
+    fn mul(self, rhs: CipherText) -> Self::Output {
+        let mut c0 = self.0.clone();
+        c0 *= &rhs.0;
+
+        let mut c1 = self.0.clone();
+        c1 *= &rhs.1;
+        let mut tmp = self.1.clone();
+        tmp *= &rhs.0;
+        c1 += &tmp;
+
+        let mut c2 = self.1.clone();
+        c2 *= &rhs.1.clone();
+
+        let (t, q) = LPR::gen_moduli();
+        c0 *= &t.0;
+        c1 *= &t.0;
+        c2 *= &t.0;
+
+        c0 /= &q.0;
+        c1 /= &q.0;
+        c2 /= &q.0;
+
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DELTA_R, T_EXP_BYTES_PLUS_1};
+    use num_traits::Zero;
 
     #[test]
     fn test_modulo_relation() {
@@ -129,7 +206,7 @@ mod tests {
         let mut res: CycloPoly<Integer> = keys.sk.0.clone();
         res *= &keys.pk.1;
         res += &keys.pk.0;
-        res.modulo_assign(dbg!(&keys.ctxt_mod.0));
+        res.modulo_assign(&keys.ctxt_mod.0);
         // Should be B-bounded now.
         let norm = res.max_norm(&keys.ctxt_mod.0);
         assert!(norm.0 < keys.gauss_dist.bound.into());
@@ -180,5 +257,28 @@ mod tests {
         let ctxt = LPR::enc(&keys.pk, &keys.gauss_dist, &rand_message);
         let dec_m = keys.dec(&ctxt);
         assert_eq!(dec_m, rand_message);
+    }
+    #[test]
+    fn test_add() {
+        let keys = LPR::new();
+        let m1 = CycloPoly::<Integer>::uniform_sample::<T_EXP_BYTES_PLUS_1>(
+            &keys.gauss_dist.rng,
+            &keys.ptxt_mod.0,
+        );
+        let m2 = CycloPoly::<Integer>::uniform_sample::<T_EXP_BYTES_PLUS_1>(
+            &keys.gauss_dist.rng,
+            &keys.ptxt_mod.0,
+        );
+        let mut m3 = m1.clone();
+        m3 += &m2;
+        let c1 = LPR::enc(&keys.pk, &keys.gauss_dist, &m1);
+        let c2 = LPR::enc(&keys.pk, &keys.gauss_dist, &m2);
+        let mut c3 = c2;
+        c3 += &c1;
+        let dec_m3 = keys.dec(&c3);
+
+        // Hom.ops only valid mod t.
+        m3.modulo_assign(&keys.ptxt_mod.0);
+        assert_eq!(&dec_m3, &m3);
     }
 }
