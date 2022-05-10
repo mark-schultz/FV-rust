@@ -1,5 +1,3 @@
-#![feature(trace_macros)]
-
 mod arith;
 mod encrypt;
 mod utils;
@@ -17,7 +15,7 @@ const Q_EXP: usize = 1359; // 1359;
 const Q_EXP_BYTES_PLUS_1: usize = Q_EXP / 8 + 1;
 // Can't construct Q in a const context, it is always Integer::One() << N though
 // Same with t, although t = 2 is chosen in the paper
-const T_EXP: usize = 1; // 1;
+const T_EXP: usize = 1;
 const T_EXP_BYTES_PLUS_1: usize = T_EXP / 8 + 1;
 
 #[derive(Debug)]

@@ -1,8 +1,11 @@
 //! Encryption Scheme
 
+use std::ops::AddAssign;
+
 use crate::arith::{CycloPoly, Integer};
 use crate::utils::{CDT_table, RandGenerator};
-use crate::{DEGREE, DELTA_R, Q_EXP, Q_EXP_BYTES_PLUS_1, SIGMA, T_EXP, T_EXP_BYTES_PLUS_1};
+use crate::{DELTA_R, Q_EXP, Q_EXP_BYTES_PLUS_1, SIGMA, T_EXP, T_EXP_BYTES_PLUS_1};
+use num_traits::identities::{Zero};
 
 struct LPR {
     gauss_dist: CDT_table,
@@ -18,12 +21,19 @@ struct CipherText(CycloPoly<Integer>, CycloPoly<Integer>);
 struct PtxtModuli(Integer);
 struct CtxtModuli(Integer);
 
+impl AddAssign<&CipherText> for CipherText {
+    fn add_assign(&mut self, rhs: &CipherText) {
+        self.0 += &rhs.0;
+        self.1 += &rhs.1;
+    }
+}
+
 impl LPR {
     fn sk_gen(dist: &CDT_table) -> SecretKey {
         SecretKey(CycloPoly::<Integer>::sample(dist))
     }
     fn pk_gen(dist: &CDT_table, sk: &SecretKey, modulus: &CtxtModuli) -> PublicKey {
-        let mut a = CycloPoly::uniform_sample::<Q_EXP_BYTES_PLUS_1>(&dist.rng, &modulus.0);
+        let a = CycloPoly::uniform_sample::<Q_EXP_BYTES_PLUS_1>(&dist.rng, &modulus.0);
         let mut b = a.clone();
         b *= &sk.0;
         let e = CycloPoly::sample(&dist);
@@ -39,11 +49,12 @@ impl LPR {
         ctxt_mod <<= Q_EXP;
         (PtxtModuli(ptxt_mod), CtxtModuli(ctxt_mod))
     }
-    fn gen_scaling_factor(t: &PtxtModuli, q: &CtxtModuli) -> Integer {
-        let mut out = q.0.clone();
-        out /= &t.0;
-        out
+    fn gen_scaling_factor() -> Integer {
+        let (t, mut q) = LPR::gen_moduli();
+        q.0 /= &t.0;
+        q.0
     }
+
     fn new() -> Self {
         let rng = RandGenerator::new();
         let dist = CDT_table::new(&rng, SIGMA);
@@ -60,45 +71,37 @@ impl LPR {
     }
     fn enc(pk: &PublicKey, dist: &CDT_table, m: &CycloPoly<Integer>) -> CipherText {
         let mut p0 = pk.0.clone();
-        let (t, q) = LPR::gen_moduli();
+        let (_, q) = LPR::gen_moduli();
         let u = CycloPoly::<Integer>::sample(&dist);
         p0 *= &u;
         let e1 = CycloPoly::<Integer>::sample(&dist);
         p0 += &e1;
-        let delta = LPR::gen_scaling_factor(&t, &q);
+        let delta = LPR::gen_scaling_factor();
         let mut m = m.clone();
-        m *= &delta;
+        m.encode(&delta);
         p0 += &m;
         p0.modulo_assign(&q.0);
+        dbg!(&p0);
 
         let mut p1 = pk.1.clone();
         p1 *= &u;
         let e2 = CycloPoly::<Integer>::sample(&dist);
         p1 += &e2;
         p1.modulo_assign(&q.0);
+        dbg!(&p1);
 
         CipherText(p0, p1)
     }
     fn dec(&self, ctxt: &CipherText) -> CycloPoly<Integer> {
-        let t = &self.ptxt_mod.0;
-        let q = &self.ctxt_mod.0;
+        let t = &self.ptxt_mod;
+        let q = &self.ctxt_mod;
         let mut c = ctxt.1.clone();
         c *= &self.sk.0;
         c += &ctxt.0;
-        c.modulo_assign(q);
-
-        // Simulating centered rounding
-        // Normally, add 1/2
-        // Here, add (q/2)/q.
-        c *= t;
-        let mut offset: CycloPoly<Integer> = CycloPoly::<Integer>::all_ones();
-        let mut scale: Integer = 1_i32.into();
-        scale <<= Q_EXP - 1;
-        offset *= &scale;
-        c += &offset;
-
-        c /= q;
-        c.modulo_assign(t);
+        c.modulo_assign(&q.0);
+        let delta = LPR::gen_scaling_factor();
+        c.decode(&delta);
+        c.modulo_assign(&t.0);
         c
     }
 }
@@ -110,7 +113,7 @@ mod tests {
     #[test]
     fn test_modulo_relation() {
         let (t, q) = LPR::gen_moduli();
-        let mut delta = LPR::gen_scaling_factor(&t, &q);
+        let mut delta = LPR::gen_scaling_factor();
         let mut expected_delta = q.0.clone();
         expected_delta >>= 1;
         assert_eq!(&expected_delta, &delta);
@@ -125,9 +128,7 @@ mod tests {
         let keys = LPR::new();
         let mut res: CycloPoly<Integer> = keys.sk.0.clone();
         res *= &keys.pk.1;
-        let a_s = res.clone();
         res += &keys.pk.0;
-        let as_b = res.clone();
         res.modulo_assign(dbg!(&keys.ctxt_mod.0));
         // Should be B-bounded now.
         let norm = res.max_norm(&keys.ctxt_mod.0);
@@ -152,12 +153,20 @@ mod tests {
         rand_message *= &delta;
         c0 -= &rand_message;
         let norm = c0.max_norm(&keys.ctxt_mod.0);
-        let B: usize = (&keys.gauss_dist.bound)
+        let dist_bound: usize = (&keys.gauss_dist.bound)
             .abs()
             .try_into()
-            .expect("B is on the order of 10sigma << 2^32");
-        let bound = 2 * DELTA_R * B * B + B;
+            .expect("dist_bound is on the order of 10sigma << 2^32");
+        let bound = 2 * DELTA_R * dist_bound * dist_bound + dist_bound;
         assert!(norm.0 < bound.into());
+    }
+    #[test]
+    fn test_enc_zero() {
+        let keys = LPR::new();
+        let m = CycloPoly::<Integer>::zero();
+        let ctxt = LPR::enc(&keys.pk, &keys.gauss_dist, &m);
+        let dec_m = keys.dec(&ctxt);
+        assert_eq!(&dec_m, &m);
     }
 
     #[test]

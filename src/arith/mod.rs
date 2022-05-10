@@ -101,6 +101,7 @@ impl Integer {
     ///
     /// Formula via case analysis of parity of q mod 2
     fn modulo_assign(&mut self, rhs: &Integer) {
+        dbg!(&self);
         let mut shift = rhs.clone();
         shift.0 -= 1_i32;
         shift >>= 1;
@@ -108,6 +109,13 @@ impl Integer {
         *self += &shift;
         *self %= rhs;
         *self -= &shift;
+        // hacky
+        if self.0.sign() == Sign::Minus {
+            *self += rhs;
+            *self += &shift;
+            *self %= rhs;
+            *self -= &shift;
+        }
     }
     fn modulo(self, rhs: Integer) -> Self {
         let mut output = self.clone();
@@ -129,7 +137,7 @@ impl Integer {
     fn modulo_norm(&self, q: &Integer) -> Integer {
         let mut res = self.clone();
         res %= &q;
-        let mut candidate = res.clone();
+        let candidate = res.clone();
         res = -res;
         res += &q;
         // Both res and candidate should be in [0, q)
@@ -139,6 +147,15 @@ impl Integer {
         } else {
             candidate
         }
+    }
+    /// Noise-tolerant Encoding/Decoding used.
+    fn encode(&mut self, q: &Integer) {
+        *self *= &q;
+    }
+
+    fn decode(&mut self, q: &Integer) {
+        *self += &self.modulo_norm(q);
+        *self /= &q;
     }
 }
 
@@ -402,6 +419,18 @@ impl CycloPoly<Integer> {
         }
         out
     }
+    /// Noise-tolerant Encoding/Decoding used.
+    pub(crate) fn encode(&mut self, q: &Integer) {
+        for i in 0..DEGREE {
+            self.coeffs[i].encode(&q);
+        }
+    }
+
+    pub(crate) fn decode(&mut self, q: &Integer) {
+        for i in 0..DEGREE {
+            self.coeffs[i].decode(&q);
+        }
+    }
 }
 
 /// Input is [a, b, c, ..., n], where a,b,c all implement FromStr,
@@ -529,5 +558,32 @@ mod tests {
         for (p1, p2, p3) in test_cases.into_iter() {
             assert_eq!(p1 * p2, p3);
         }
+    }
+    #[test]
+    fn test_encoding_decoding() {
+        let rng = RandGenerator::new();
+        let mut q = Integer::one();
+        q <<= 10;
+        let mut m = Integer::uniform_sample::<{ 2 << 8 + 1 }>(&rng, &q);
+        let ref_m = m.clone();
+        m.encode(&q);
+        for noise_idx in -511..512 {
+            dbg!(&noise_idx);
+            let noise: Integer = noise_idx.into();
+            let mut noised_m = m.clone();
+            noised_m += &noise;
+            noised_m.decode(&q);
+            assert_eq!(&noised_m, &ref_m);
+        }
+    }
+    // Recurring bug
+    // have hacky fix.
+    #[test]
+    fn test_mod_minus_1() {
+        let mut val_to_mod = -Integer::one();
+        let expected = Integer::one();
+        let modulus: Integer = 2_i32.into();
+        val_to_mod.modulo_assign(&modulus);
+        assert_eq!(&val_to_mod, &expected);
     }
 }
