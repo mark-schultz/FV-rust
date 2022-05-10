@@ -4,12 +4,14 @@ use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 
 use crate::arith::{CycloPoly, Integer};
 use crate::utils::{CDT_table, RandGenerator};
-use crate::{Q_EXP, Q_EXP_BYTES_PLUS_1, RELIN_TERMS, SIGMA, T_EXP};
+use crate::{Q_EXP, Q_EXP_BYTES_PLUS_1, RELIN_BASE, RELIN_TERMS, SIGMA, T_EXP};
+use num_traits::One;
 
 struct LPR {
     gauss_dist: CDT_table,
     sk: SecretKey,
     pk: PublicKey,
+    rlk: RelinearizationKey,
     ctxt_mod: CtxtModuli,
     ptxt_mod: PtxtModuli,
 }
@@ -38,8 +40,10 @@ impl LPR {
         PublicKey(b, a)
     }
     fn rlk_gen(dist: &CDT_table, sk: &SecretKey, modulus: &CtxtModuli) -> RelinearizationKey {
-        let mut _out: Vec<(CycloPoly<Integer>, CycloPoly<Integer>)> = Vec::new();
-        for _i in 0..=RELIN_TERMS {
+        let mut out: Vec<(CycloPoly<Integer>, CycloPoly<Integer>)> = Vec::new();
+        let base: Integer = RELIN_BASE.into();
+        let mut multiplier = Integer::one();
+        for i in 0..=RELIN_TERMS {
             let a = CycloPoly::uniform_sample::<Q_EXP_BYTES_PLUS_1>(&dist.rng, &modulus.0);
             let mut b = a.clone();
             b *= &sk.0;
@@ -48,11 +52,13 @@ impl LPR {
             b = -b;
             let mut s_squared = sk.0.clone();
             s_squared *= &sk.0;
-
+            s_squared *= &multiplier;
+            multiplier *= &base; // T^i
             b += &s_squared;
             b.modulo_assign(&modulus.0);
+            out.push((b, a))
         }
-        todo!()
+        RelinearizationKey(out)
     }
 
     fn gen_moduli() -> (PtxtModuli, CtxtModuli) {
@@ -74,10 +80,12 @@ impl LPR {
         let (t, q) = LPR::gen_moduli();
         let sk = LPR::sk_gen(&dist);
         let pk = LPR::pk_gen(&dist, &sk, &q);
+        let rlk = LPR::rlk_gen(&dist, &sk, &q);
         LPR {
             gauss_dist: dist,
             sk,
             pk,
+            rlk,
             ctxt_mod: q,
             ptxt_mod: t,
         }
@@ -177,7 +185,29 @@ impl Mul<CipherText> for CipherText {
         c1 /= &q.0;
         c2 /= &q.0;
 
-        todo!()
+        UnlinearizedCiphertext(c0, c1, c2)
+    }
+}
+
+impl UnlinearizedCiphertext {
+    fn linearize(self, rlk: &RelinearizationKey) -> CipherText {
+        let (_, q) = LPR::gen_moduli();
+        let mut c0_prime = self.0.clone();
+        let mut c1_prime = self.1.clone();
+        let c2_decomp = self.2.clone().base_decompose();
+        for i in 0..=RELIN_TERMS {
+            let mut tmp = rlk.0[i].0.clone();
+            tmp *= &c2_decomp[i];
+            c0_prime += &tmp;
+        }
+        c0_prime.modulo_assign(&q.0);
+        for i in 0..=RELIN_TERMS {
+            let mut tmp = rlk.0[i].1.clone();
+            tmp *= &c2_decomp[i];
+            c1_prime += &tmp;
+        }
+        c1_prime.modulo_assign(&q.0);
+        CipherText(c0_prime, c1_prime)
     }
 }
 
@@ -275,6 +305,29 @@ mod tests {
         let c2 = LPR::enc(&keys.pk, &keys.gauss_dist, &m2);
         let mut c3 = c2;
         c3 += &c1;
+        let dec_m3 = keys.dec(&c3);
+
+        // Hom.ops only valid mod t.
+        m3.modulo_assign(&keys.ptxt_mod.0);
+        assert_eq!(&dec_m3, &m3);
+    }
+    #[test]
+    fn test_mul() {
+        let keys = LPR::new();
+        let m1 = CycloPoly::<Integer>::uniform_sample::<T_EXP_BYTES_PLUS_1>(
+            &keys.gauss_dist.rng,
+            &keys.ptxt_mod.0,
+        );
+        let m2 = CycloPoly::<Integer>::uniform_sample::<T_EXP_BYTES_PLUS_1>(
+            &keys.gauss_dist.rng,
+            &keys.ptxt_mod.0,
+        );
+        let mut m3 = m1.clone();
+        m3 *= &m2;
+        let c1 = LPR::enc(&keys.pk, &keys.gauss_dist, &m1);
+        let c2 = LPR::enc(&keys.pk, &keys.gauss_dist, &m2);
+        let c3 = c1 * c2;
+        let c3 = c3.linearize(&keys.rlk);
         let dec_m3 = keys.dec(&c3);
 
         // Hom.ops only valid mod t.
