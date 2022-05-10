@@ -4,7 +4,7 @@ use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 
 use crate::arith::{CycloPoly, Integer};
 use crate::utils::{CDT_table, RandGenerator};
-use crate::{Q_EXP, Q_EXP_BYTES_PLUS_1, RELIN_BASE, RELIN_TERMS, SIGMA, T_EXP};
+use crate::{Q_EXP, Q_EXP_BYTES_PLUS_1, RELIN_EXP, RELIN_TERMS, SIGMA, T_EXP};
 use num_traits::One;
 
 struct LPR {
@@ -41,7 +41,8 @@ impl LPR {
     }
     fn rlk_gen(dist: &CDT_table, sk: &SecretKey, modulus: &CtxtModuli) -> RelinearizationKey {
         let mut out: Vec<(CycloPoly<Integer>, CycloPoly<Integer>)> = Vec::new();
-        let base: Integer = RELIN_BASE.into();
+        let mut base: Integer = Integer::one();
+        base <<= RELIN_EXP;
         let mut multiplier = Integer::one();
         for i in 0..=RELIN_TERMS {
             let a = CycloPoly::uniform_sample::<Q_EXP_BYTES_PLUS_1>(&dist.rng, &modulus.0);

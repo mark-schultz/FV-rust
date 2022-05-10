@@ -1,10 +1,11 @@
+#![allow(dead_code, unused_variables)]
+
 mod arith;
 mod encrypt;
 mod utils;
 
 // Parems once I figure them out
-#[allow(dead_code)]
-const SIGMA: f64 = 5.;
+const SIGMA: f64 = 1000.;
 // The exponent of the degree of the polynomail ring, i.e. we are working
 // mod x^d+1 for d = 2^DEGREE_EXP.
 const DEGREE_EXP: usize = 10; // 10;
@@ -18,8 +19,13 @@ const Q_EXP_BYTES_PLUS_1: usize = Q_EXP / 8 + 1;
 const T_EXP: usize = 1;
 const T_EXP_BYTES_PLUS_1: usize = T_EXP / 8 + 1;
 
-const RELIN_BASE: i32 = 2;
-const RELIN_TERMS: usize = Q_EXP; // floor(log_T(q))
+// Small RELIN terms
+// const RELIN_EXP: usize = 1;
+// const RELIN_TERMS: usize = Q_EXP; // floor(log_T(q))
+
+// Large (ish) RELIN terms
+const RELIN_EXP: usize = Q_EXP >> 1;
+const RELIN_TERMS: usize = 2; // floor(log_T(q))
 
 #[derive(Debug)]
 pub enum Errors {

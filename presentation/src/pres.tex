@@ -5,16 +5,19 @@
 \usepackage{graphicx} % external images
 \usepackage[font=small]{caption} % caption numbers
 \usepackage{tikz}
+\usepackage{xcolor}
+
+\usepackage{mathtools, amssymb, physics}
 
 \theoremstyle{definition}
 
 
 
 
-\title{Improving Low-Resource Neural~Machine~Translation}
-\author{Leon Cheung} 
+\title{Implementing the FV FHE Scheme}
+\author{Mark Schultz} 
 \institute{University of California San Diego}
-\date{8 September 2017} % custom date
+\date{10 May 2022} % custom date
 
 % Comment this section out to disable table of contents at section begin.
 \AtBeginSection[]
@@ -25,6 +28,10 @@
 \tableofcontents[currentsection] 
 \end{frame}
 }
+
+\newcommand{\enc}{\mathsf{Enc}}
+\newcommand{\dec}{\mathsf{Dec}}
+\newcommand{\Nset}{\mathbb{N}}
 
 
 \begin{document}
@@ -40,87 +47,265 @@
 \end{frame}
 }
 
-\section{What Can Happen at a Critical Point?} 
+\section{Introduction}
 
-\begin{frame} 
-\frametitle{The Usual Suspects}
-
-\begin{center}
-\begin{tabular}{l | r}
-    \hline
-    jsdf & 0.23 \\
-    aaaa & 0.54
-\end{tabular}
-\end{center}
-\graybox{sdf}{sdffff}
-
-You might think that if $f'(0)=0$ (and $f$ is not a constant function) then at 
-$x=0$, $f$ must have
+\begin{frame}
+	\frametitle{Who am I?}
+	\begin{itemize}
+		\item 4th year PhD Student at U.C.S.D\pause
 \begin{itemize}
-\pause \item a local maximum, or 
-\pause \item a local minimum, or
-\end{itemize}  
+	\item Working with Daniele Micciancio in Lattice-based Cryptography\pause{}
+\end{itemize}
+\item Want to get industry experience this summer\pause{}
+\begin{itemize}
+	\item Especially on implementations
+\end{itemize}
+	\end{itemize}
 \end{frame}
 
 \begin{frame}
-\frametitle{A Counterexample}
-\alert{Consider} the function 
-\[ 
-    f(x)=
-\begin{cases} 
-x^2\sin(1/x), &\text{if }x\neq0 \\
-0, &\text{if }x=0
-\end{cases}
-\]
+	\frametitle{The Challenge}
+	\begin{itemize}
+		\item Implement a Fully Homomorphic Encryption Scheme!\pause{}
+		\begin{itemize}
+			\item The Fan-Vercauteren Scheme (FV) in particular\pause{}
+		\end{itemize}
+	\item Implemented everything but Bootstrapping
+	\end{itemize}
+\end{frame}
+
+\section{Theoretical Description}
+
+\begin{frame}
+	\frametitle{What is FHE?}
+	\begin{itemize}
+		\item PKE that supports \emph{privacy homomorphism}.\pause{}
+		\begin{itemize}
+			\item Method to compute
+			\begin{equation*}
+			(f, \enc_{pk}(m_0),\enc_{pk}(m_1))\mapsto \enc_{pk}(f(m_0,m_1))	
+			\end{equation*}\pause{}
+			\item $f \in \{+, \times\}$ is enough\pause{}.
+		\end{itemize}
+		\item Many early cryptosystems are \emph{Partially Homomorphic}\pause{}
+		\item First FHE: Gentry 2009\pause{}
+		\begin{itemize}
+			\item Combines \emph{Somewhat Homomorphic Encryption} and Bootstrapping.\pause{}
+		\end{itemize}
+	\item Also \emph{Leveled FHE}.\pause{}
+	\begin{itemize}
+		\item FV is Leveled FHE.
+	\end{itemize}
+	\end{itemize}
 \end{frame}
 
 \begin{frame}
-\frametitle{What Really Happens at $x=0$?}
-\begin{columns} 
-\begin{column}{0.5\textwidth}
-But $f(x)$ oscillates wildly as $x\to 0$, so even though $f'(0)=0$, $f$ has 
-neither max, min, nor inflection point at $x=0$.
-\end{column}
-\pause
-\begin{column}{0.5\textwidth}
-%    \includegraphics[width=5cm, height=5cm]{graph1.png}
-    \captionof{figure}{caption}
-\end{column}
-\end{columns}
+	\frametitle{What is FV?}
+	\begin{itemize}
+		\item RLWE-based version of Brakerski's ``Scale-Invariant'' FHE scheme\pause{}
+		\item Alternatively, variant of the LPR Cryptosystem that uses relinearization-based multiplication\pause{}
+		\begin{itemize}
+			\item I will explain things from this perspective.
+		\end{itemize}
+	\end{itemize}
 \end{frame}
 
-\subsection{What Does $g'(c)>0$ Mean?} 
 \begin{frame}
-\frametitle{What Really Happens at $x=0$?}
-
-\begin{center}
-%\includegraphics[width=5cm, height=5cm]{graph2.png}
-\captionof{figure}{caption}
-\end{center}
-
+	\frametitle{Ring LWE}
+	\begin{itemize}
+		\item Throughout, fix $R_q = \mathbb{Z}_q[x] / (2^d+1)$ for $d = 2^n$, and $q\in\Nset$.
+		
+		\graybox{Ring LWE Assumption}{
+		For random $s\in R_q$, and a distribution $\chi$ supported on $R_q$, the RLWE assumption is that for $a(x)\gets R_q, u(x)\gets R_q$, $e(x)\gets \chi$:
+		\begin{equation*}
+			(a(x), a(x)s(x) + e(x))\approx_c (a(x), u(x)).
+		\end{equation*}}\pause{}
+	\item $\chi$ a discrete Gaussian of parameter $\sigma$.
+	\end{itemize}
+	
 \end{frame}
+
+\begin{frame}
+	\frametitle{LPR Cryptosystem}
+	
+	\begin{itemize}
+		\item KeyGen: $sk\gets \chi$, and $pk = (a(x), a(x)s(x) + b(x))$ is an RLWE sample\pause{}
+		\item Encryption: Sample $u(x)\gets R_q$, $e_0(x),e_1(x)\gets \chi$, and outputs
+		\begin{equation*}
+			u(x)\begin{pmatrix}
+				a(x)s(x)+e(x)\\
+				-a(x)
+			\end{pmatrix} +\begin{pmatrix}
+			e_0(x)\\e_1(x)
+		\end{pmatrix}  + \begin{pmatrix}
+		\Delta m(x)\\ 0
+	\end{pmatrix}.
+		\end{equation*}\pause{}
+	\begin{itemize}
+		\item Easily supports additive homomorphism\pause{}
+	\end{itemize}
+	\item Decryption: For a ciphertext $\begin{pmatrix}
+		c_0(x)\\c_1(x)
+	\end{pmatrix}$, compute $c_0(x) + s(x)c_1(x)$, and perform simple error-correction procedure.
+	\end{itemize}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Relinearization}
+	\begin{itemize}
+		\item Idea: view decryption $\dec_{s}(c_0, c_1) = c_0 + c_1s = f_{c_0,c_1}(s)$ as a degree-1 polynomial in $s$, where
+		\begin{equation*}
+			c_0+c_1s = \Delta m + e(x).
+		\end{equation*}\pause
+	\item For two ciphertexts, one can multiply these polynomials
+\begin{equation*}
+	\dec_s(c_0,c_1)\dec_s(c_0',c_1') = \Delta^2 mm' + \Delta\times E
+\end{equation*}	\pause{}
+\item After scaling down by $\Delta$, one obtains an encryption of $mm'$
+	\end{itemize}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Relinearization Difficulties}
+	\begin{enumerate}
+		\item The polynomial is now of degree \alert{two} in $s$\pause
+		\begin{itemize}
+			\item additionally, $E$ may be large.\pause{}
+		\end{itemize}
+		\item Relinearization is a technique to address both of these issues\pause
+		\begin{itemize}
+			\item I will focus on discussing the first issue
+		\end{itemize}
+	\end{enumerate}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Reducing Degrees}
+	\begin{itemize}
+		\item The goal is to \alert{linearize} the degree 2 polynomial, i.e. find $c_0', c_1'$ such that
+		\begin{equation*}
+			c_0 + c_1s + c_2s^2 = c_0' + c_1's
+		\end{equation*}\pause{}
+	\item Done by utilizing certain encrypted forms of $s^2$\pause{}
+	\begin{itemize}
+		\item Called the \emph{relinearization key} $rk$\pause{}
+\begin{itemize}
+	\item In particular, it satisfies $rk_0 + rk_1s = s^2+e$\pause{}
+	\item Can multiply by $c_2$ and subtract\pause{}
+	\item Issue: $c_2 e$ may be \alert{large}
+\end{itemize}
+	\end{itemize}
+	\end{itemize}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Making $c_2$ smaller}
+	\begin{itemize}
+	\item Idea is to take a base $T$ decomposition $c_2 = \sum_i c_{2,i}T^i$\pause{}
+	\item Each $c_{2,i}$ \alert{small} now\pause{}
+	\begin{itemize}
+		\item Downside: Relinearization key needs encryptions of $T^is^2$ for each $i$
+	\end{itemize}
+\end{itemize}
+\end{frame}
+
+
+\section{Implementation Description} 
+
+\begin{frame}
+	\frametitle{High Level Implementation Overview}
+	\begin{itemize}
+		\item Language: Rust\pause{}
+		\item Used crates for Big-Int arithmetic + a PRG\pause{}
+		\item Focused implementation on straightforward algorithms\pause{}
+		\item All of FV implemented except Bootstrapping\pause{}
+		\begin{itemize}
+			\item Only implemented one of the two relinearization techniques.\pause{}
+		\end{itemize}
+	\end{itemize}
+\end{frame}
+
+\begin{frame}
+	\frametitle{The Straightforward Algorithms}
+	\begin{itemize}
+		\item Polynomial Arithmetic\pause{}
+		\begin{itemize}
+			\item Power of Two Cyclotomics\pause{}
+			\item Schoolbook Multiplication: $O(n^2)$\pause{}
+			\begin{itemize}
+				\item Karatsuba $O(n^{1.6})$, Toom-Cook $O(n^{1+\epsilon})$\pause{}
+				\item Number-Theoretic Transform: $O(n\log_2n)$.
+			\end{itemize}
+		\end{itemize}
+		\item Gaussian Sampling\pause{}
+		\begin{itemize}
+			\item Inverse-CDT with f64's.\pause{}
+			\begin{itemize}
+				\item Turns $[0,1]$ samples to samples of \emph{any} distribution\pause{}
+			\end{itemize}
+			\item Precision a little low.\pause{}
+			\item Big hit to make side-channel resistant\pause
+			\item Space complexity that scales poorly with $\sigma$.
+		\end{itemize}
+		\item Relinearization via Digit Decomposition
+	\end{itemize}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Parts of Implementation Working}
+	\begin{itemize}
+		\item Everything but Bootstrapping!\pause{}
+		\begin{itemize}
+			\item (And potentially extremely large $\sigma$ Gaussian sampling)\pause{}
+		\end{itemize}
+		\item Concretely
+		\begin{itemize}
+			\item All PKE algorithms supported\pause{}
+			\item Addition and Multiplication work\pause{}
+			\item Relinearization works
+		\end{itemize}
+	\end{itemize}
+\end{frame}
+
+\begin{frame}
+	\frametitle{Some Timings}
+	\begin{itemize}
+		\item Due to Rust implementation, \emph{extremely} efficient.\pause{}
+		\item Opt-level = 3 (and full-size parameters) leads to multiplications in $\approx 5$ seconds\pause{}
+		\item Funny story: Initial timing \emph{much} worse\pause{}
+		\begin{itemize}
+			\item $\approx 180$s \pause{}
+			\item Due to choice of base $T = 2$ for relinearization\pause{}
+			\begin{itemize}
+				\item Implementation was implicitly using \emph{big int} arithmetic for \emph{binary} computations\pause{}
+			\end{itemize}
+		\end{itemize}
+	\end{itemize}
+\end{frame}
+
+
+\section{Practical Demonstration} 
 
 \section{Conclusion}
 
-{
-\usebackgroundtemplate{
-    \tikz[overlay,remember picture]
-    \node[opacity=0.05, at=(current page.south east),anchor=south east,inner sep=0pt] {
-        \includegraphics[height=\paperheight,width=\paperwidth]{imgs/trident-30-4x3-right-bot}};
-}
 \begin{frame}
-The function $f(x)$ introduced earlier has other interesting properties, 
-one of which is the fact that while $f'(0)$ exists, $f'(x)$ is 
-discontinuous at $x=0$.
-\vspace{.5cm}
-
-We leave it to you to work this out for yourself and to explore this 
-interesting function further.
-\vspace{.5cm}
-
-Thank you for your attention today.
+	\frametitle{Conclusion}
+	\begin{itemize}
+		\item Plenty that could still be done\pause{}
+\begin{itemize}
+	\item Bootstrapping\pause{}
+	\item Faster polynomial arithmetic\pause{}
+	\item Better Gaussian sampling\pause{}
+\end{itemize}
+\item Fun Implementation\pause
+\begin{itemize}
+	\item The easy parts were hard, and the hard parts were easy
+\end{itemize}
+	\end{itemize}
 \end{frame}
-}
+
+
+
 
 \end{document}
 

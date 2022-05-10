@@ -6,7 +6,7 @@
 
 use crate::{
     utils::{CDT_table, RandGenerator},
-    Errors, DEGREE, RELIN_BASE, RELIN_TERMS,
+    Errors, DEGREE, RELIN_EXP, RELIN_TERMS,
 };
 use num_bigint::{BigInt, Sign};
 use num_traits::identities::{One, Zero};
@@ -157,7 +157,8 @@ impl Integer {
     }
 
     fn base_decompose(self) -> Vec<Integer> {
-        let base: Integer = RELIN_BASE.into();
+        let mut base: Integer = Integer::one();
+        base <<= RELIN_EXP;
         let mut out = Vec::new();
         let mut remaining = self.clone();
         for _ in 0..=RELIN_TERMS {
@@ -579,7 +580,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_addition() {
         let test_cases = read_from_file("src/arith/add_test_cases.txt");
         for (p1, p2, p3) in test_cases.into_iter() {
@@ -587,7 +587,6 @@ mod tests {
         }
     }
     #[test]
-    #[ignore]
     fn test_multiplication() {
         let test_cases = read_from_file("src/arith/mul_test_cases.txt");
         for (p1, p2, p3) in test_cases.into_iter() {
@@ -622,7 +621,8 @@ mod tests {
     }
     #[test]
     fn test_base_decompose() {
-        let base: Integer = RELIN_BASE.into();
+        let mut base: Integer = Integer::one();
+        base <<= RELIN_EXP;
         // 1 + 1*base + 1 * base^2
         let one = Integer::one();
         let mut val = one.clone();
@@ -653,7 +653,9 @@ mod tests {
         let expected = poly.clone();
         let decomposed_poly = poly.base_decompose();
 
-        let base: Integer = RELIN_BASE.into();
+        let mut base: Integer = Integer::one();
+        base <<= RELIN_EXP;
+
         let mut multiplier = Integer::one();
         let mut reconstructed = CycloPoly::<Integer>::zero();
         for i in 0..=RELIN_TERMS {
